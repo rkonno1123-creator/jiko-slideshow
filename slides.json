@@ -1,0 +1,83 @@
+[
+  {
+    "file": "20260303-01.pdf",
+    "title": "立防下部の笹竹伐採中に手鎌で指切傷",
+    "date": "2026-03-03",
+    "severity": "軽傷",
+    "comment": "",
+    "visible": true,
+    "durationSec": 30
+  },
+  {
+    "file": "20260303-02.pdf",
+    "title": "作業後の片付け時に伸縮はしごに指を挟む",
+    "date": "2026-03-03",
+    "severity": "重傷",
+    "comment": "",
+    "visible": true,
+    "durationSec": 30
+  },
+  {
+    "file": "20260318-01.pdf",
+    "title": "走行車線規制内の空ペール缶が追越車線に転がり一般車に接触",
+    "date": "2026-03-18",
+    "severity": "物損",
+    "comment": "",
+    "visible": true,
+    "durationSec": 30
+  },
+  {
+    "file": "20260318-02.pdf",
+    "title": "シールド工事で作業床へ梯子から乗り移る際に梯子の固定が外れ落下",
+    "date": "2026-03-18",
+    "severity": "軽傷",
+    "comment": "",
+    "visible": true,
+    "durationSec": 30
+  },
+  {
+    "file": "20260318-03.pdf",
+    "title": "ヤード内で側溝を上下反転させる際に親指を挟む",
+    "date": "2026-03-18",
+    "severity": "重傷",
+    "comment": "",
+    "visible": true,
+    "durationSec": 30
+  },
+  {
+    "file": "20260331-01.pdf",
+    "title": "シールドマシン工事で敷鉄板を荷降ろし時に右手薬指を挟む",
+    "date": "2026-03-31",
+    "severity": "重傷",
+    "comment": "",
+    "visible": true,
+    "durationSec": 30
+  },
+  {
+    "file": "20260331-02.pdf",
+    "title": "湿塩散布車点検中にステップ3段目から転落し左足首負傷",
+    "date": "2026-03-31",
+    "severity": "重傷",
+    "comment": "",
+    "visible": true,
+    "durationSec": 30
+  },
+  {
+    "file": "20260331-03.pdf",
+    "title": "橋脚内部でプラ船容器を吊上げる際に容器が落下し作業員の顔に接触",
+    "date": "2026-03-31",
+    "severity": "軽傷",
+    "comment": "",
+    "visible": true,
+    "durationSec": 30
+  },
+  {
+    "file": "20260408-01.pdf",
+    "title": "トールゲート基礎新設のため掘削時に管理図に無い給水を破損",
+    "date": "2026-04-08",
+    "severity": "物損",
+    "comment": "",
+    "visible": true,
+    "durationSec": 30
+  }
+]

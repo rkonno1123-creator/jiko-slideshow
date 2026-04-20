@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>事故情報スライドショー v0.2</title>
+<style>
+  /* ========================================
+     事故情報スライドショー v0.2
+     - slides.json を読み込んでスライドを表示
+     - visible=false のものはスキップ
+     - 各スライドの durationSec で秒数指定可
+     ======================================== */
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: 'Hiragino Sans', 'Meiryo', sans-serif; }
+
+  /* PDFを表示する枠 */
+  #slide {
+    width: 100vw;
+    height: 100vh;
+    border: none;
+    background: #fff;
+  }
+
+  /* 左上のカウンターとタイトル */
+  #info {
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    background: rgba(0, 0, 0, 0.7);
+    color: #fff;
+    padding: 8px 14px;
+    border-radius: 4px;
+    font-size: 13px;
+    z-index: 10;
+    max-width: 80vw;
+  }
+  #info .counter { font-weight: bold; margin-right: 8px; }
+  #info .title { opacity: 0.9; }
+  #info .severity {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    margin-left: 8px;
+    font-size: 11px;
+  }
+  .sev-軽傷 { background: #FAC775; color: #412402; }
+  .sev-重傷 { background: #E24B4A; color: #fff; }
+  .sev-死亡 { background: #000; color: #fff; border: 1px solid #fff; }
+  .sev-物損 { background: #85B7EB; color: #042C53; }
+
+  /* 操作バー（マウスを下に持っていくと出る） */
+  #controls {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 12px 24px;
+    background: rgba(0, 0, 0, 0.8);
+    color: #fff;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    transform: translateY(100%);
+    transition: transform 0.3s;
+    z-index: 10;
+  }
+  #controls.show { transform: translateY(0); }
+
+  #hover-zone {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 60px;
+    z-index: 5;
+  }
+
+  #controls button {
+    background: #fff;
+    color: #000;
+    border: none;
+    padding: 6px 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+  }
+  #controls button:hover { background: #ddd; }
+
+  #controls input[type="number"] {
+    width: 60px;
+    padding: 4px;
+    border: none;
+    border-radius: 4px;
+  }
+
+  /* ローディング画面 */
+  #loading {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: #000;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    z-index: 100;
+  }
+  #loading.hide { display: none; }
+
+  /* エラー画面 */
+  #error {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: #300;
+    color: #fff;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    padding: 40px;
+    text-align: center;
+    z-index: 100;
+  }
+  #error.show { display: flex; }
+</style>
+</head>
+<body>
+
+<!-- ローディング -->
+<div id="loading">読み込み中...</div>
+
+<!-- エラー -->
+<div id="error">
+  <h2>読み込みエラー</h2>
+  <p id="errorMsg" style="margin-top: 16px;"></p>
+</div>
+
+<!-- PDFを表示する枠 -->
+<iframe id="slide" src=""></iframe>
+
+<!-- 左上の情報表示 -->
+<div id="info">
+  <span class="counter">-/-</span>
+  <span class="title">-</span>
+  <span class="severity"></span>
+</div>
+
+<!-- マウスホバー検知領域 -->
+<div id="hover-zone"></div>
+
+<!-- 操作バー -->
+<div id="controls">
+  <button onclick="prev()">◀ 前へ</button>
+  <button onclick="togglePause()" id="pauseBtn">⏸ 停止</button>
+  <button onclick="next()">次へ ▶</button>
+  <span id="status" style="flex: 1;"></span>
+  <label>
+    秒数:
+    <input type="number" id="interval" value="30" min="5" max="300">
+  </label>
+</div>
+
+<script>
+/* ========================================
+   状態管理
+   ======================================== */
+let allSlides = [];        // slides.jsonの全データ
+let visibleSlides = [];    // visible=trueだけ抽出したもの
+let currentIndex = 0;
+let isPaused = false;
+let timer = null;
+
+/* ========================================
+   初期化：slides.jsonを読み込む
+   ======================================== */
+async function init() {
+  try {
+    const response = await fetch('slides.json');
+    if (!response.ok) throw new Error('slides.json が見つかりません (HTTP ' + response.status + ')');
+    allSlides = await response.json();
+
+    // visible=true のものだけフィルタ
+    visibleSlides = allSlides.filter(s => s.visible === true);
+
+    if (visibleSlides.length === 0) {
+      throw new Error('表示可能なスライドがありません。slides.json の visible を確認してください。');
+    }
+
+    // ローディング消して、最初のスライドを表示
+    document.getElementById('loading').classList.add('hide');
+    showSlide(0);
+    resetTimer();
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+/* ========================================
+   スライド表示
+   ======================================== */
+function showSlide(index) {
+  // インデックスをループさせる
+  currentIndex = ((index % visibleSlides.length) + visibleSlides.length) % visibleSlides.length;
+  const slide = visibleSlides[currentIndex];
+
+  // PDFを表示（#view=FitH で幅に合わせる、toolbarとnavpanesを消す）
+  document.getElementById('slide').src = 'pdfs/' + slide.file + '#view=FitH&toolbar=0&navpanes=0';
+
+  // 情報表示を更新
+  document.querySelector('#info .counter').textContent = (currentIndex + 1) + ' / ' + visibleSlides.length;
+  document.querySelector('#info .title').textContent = slide.title;
+  const sevEl = document.querySelector('#info .severity');
+  sevEl.textContent = slide.severity;
+  sevEl.className = 'severity sev-' + slide.severity;
+
+  // ステータス表示（操作バー内）
+  document.getElementById('status').textContent = slide.date + ' ' + slide.file;
+
+  // 秒数入力欄にこのスライドの秒数をセット
+  document.getElementById('interval').value = slide.durationSec || 30;
+}
+
+/* ========================================
+   次へ・前へ
+   ======================================== */
+function next() { showSlide(currentIndex + 1); resetTimer(); }
+function prev() { showSlide(currentIndex - 1); resetTimer(); }
+
+/* ========================================
+   自動送りタイマー
+   ======================================== */
+function resetTimer() {
+  if (timer) clearTimeout(timer);
+  if (isPaused) return;
+  const sec = parseInt(document.getElementById('interval').value) || 30;
+  timer = setTimeout(() => next(), sec * 1000);
+}
+
+/* ========================================
+   一時停止トグル
+   ======================================== */
+function togglePause() {
+  isPaused = !isPaused;
+  document.getElementById('pauseBtn').textContent = isPaused ? '▶ 再生' : '⏸ 停止';
+  resetTimer();
+}
+
+/* ========================================
+   エラー表示
+   ======================================== */
+function showError(msg) {
+  document.getElementById('loading').classList.add('hide');
+  document.getElementById('error').classList.add('show');
+  document.getElementById('errorMsg').textContent = msg;
+}
+
+/* ========================================
+   キーボード操作
+   ======================================== */
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowRight') next();
+  else if (e.key === 'ArrowLeft') prev();
+  else if (e.key === ' ') { e.preventDefault(); togglePause(); }
+});
+
+/* ========================================
+   マウスホバーで操作バー表示
+   ======================================== */
+document.getElementById('hover-zone').addEventListener('mouseenter', () => {
+  document.getElementById('controls').classList.add('show');
+});
+document.getElementById('controls').addEventListener('mouseleave', () => {
+  document.getElementById('controls').classList.remove('show');
+});
+
+/* 秒数変更時にタイマーリセット */
+document.getElementById('interval').addEventListener('change', resetTimer);
+
+/* 起動 */
+init();
+</script>
+</body>
+</html>
