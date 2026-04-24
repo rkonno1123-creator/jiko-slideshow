@@ -2,19 +2,17 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>事故情報スライドショー v0.1</title>
+<title>事故情報スライドショー v0.1.1</title>
 <style>
   /* ========================================
-     事故情報スライドショー v0.1
-     - タブレット横のPCでブラウザで開く用
-     - PDFをiframeで全画面表示して秒数で自動切替
+     事故情報スライドショー v0.1.1
+     - デフォルト秒数を5秒に変更（デモ用）
+     - ファイル名を実ファイルに合わせて修正
      ======================================== */
 
-  /* 全体リセット */
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
 
-  /* スライド本体（PDFを表示する枠） */
   #slide {
     width: 100vw;
     height: 100vh;
@@ -22,7 +20,6 @@
     background: #fff;
   }
 
-  /* 画面下の操作バー（最初は隠れてて、マウスを下に動かすと出てくる） */
   #controls {
     position: fixed;
     bottom: 0;
@@ -42,7 +39,6 @@
   }
   #controls.show { transform: translateY(0); }
 
-  /* マウスを画面下に寄せた時に操作バーを出すためのホバー領域 */
   #hover-zone {
     position: fixed;
     bottom: 0;
@@ -65,7 +61,6 @@
 
   #status { flex: 1; }
 
-  /* 左上の件数表示 */
   #counter {
     position: fixed;
     top: 16px;
@@ -82,36 +77,33 @@
 </head>
 <body>
 
-<!-- PDFを表示する枠 -->
 <iframe id="slide" src=""></iframe>
 
-<!-- 左上のカウンター -->
-<div id="counter">1 / 11</div>
+<div id="counter">1 / 1</div>
 
-<!-- 画面下のマウスホバー検知領域 -->
 <div id="hover-zone"></div>
 
-<!-- 操作バー -->
 <div id="controls">
   <button onclick="prev()">◀ 前へ</button>
   <button onclick="togglePause()" id="pauseBtn">⏸ 停止</button>
   <button onclick="next()">次へ ▶</button>
   <span id="status"></span>
   <label>
-    秒数:
-    <input type="number" id="interval" value="30" min="5" max="300" style="width: 60px;">
+    秒数（全スライド共通）:
+    <input type="number" id="interval" value="5" min="1" max="300" style="width: 60px;">
   </label>
 </div>
 
 <script>
 /* ========================================
    設定：スライドに流すPDFのリスト
+   実ファイル名に合わせて記載
    新しく追加したい時はこの配列に追記するだけ。
-   pdfsフォルダに同じ名前でPDFを置いてください。
    ======================================== */
 const slides = [
   "pdfs/S20260303-01_立防下部の笹竹伐採の際に手鎌で指を切る⇒軽傷.pdf",
   "pdfs/S20260303-02_作業後の片付け時に伸縮はしごに指を挟む⇒重傷.pdf",
+  "pdfs/S20260316_02_【類似事故】高所作業車を用いた高架下作業における「はさまれ・巻き込まれ」事故.pdf",
   "pdfs/S20260318-01_走行車線規制内の空ペール缶が追越車線に転がり一般車に接触⇒物損.pdf",
   "pdfs/S20260318-02_シールド工事で作業床へ梯子から乗り移る際に梯子の固定が外れ落下⇒打撲(軽傷).pdf",
   "pdfs/S20260318-03_ヤード内で側溝を上下反転させる際に親指を挟む⇒裂傷・骨折(重傷).pdf",
@@ -139,7 +131,8 @@ function showSlide(index) {
 function next() { showSlide(currentIndex + 1); resetTimer(); }
 function prev() { showSlide(currentIndex - 1); resetTimer(); }
 
-/* 自動送りのタイマー */
+/* 自動送りのタイマー
+   入力欄の秒数で全スライドを切り替える（全スライド共通） */
 function resetTimer() {
   if (timer) clearInterval(timer);
   if (isPaused) return;
@@ -169,8 +162,9 @@ document.getElementById('controls').addEventListener('mouseleave', () => {
   document.getElementById('controls').classList.remove('show');
 });
 
-/* 秒数変更時にタイマーをリセット */
+/* 秒数変更時にタイマーをリセット（次の切り替えから新しい秒数で動く） */
 document.getElementById('interval').addEventListener('change', resetTimer);
+document.getElementById('interval').addEventListener('input', resetTimer);
 
 /* 起動 */
 showSlide(0);
