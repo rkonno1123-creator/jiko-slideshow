@@ -2,12 +2,12 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>事故情報スライドショー v0.1.1</title>
+<title>事故情報スライドショー v0.1.2</title>
 <style>
   /* ========================================
-     事故情報スライドショー v0.1.1
-     - デフォルト秒数を5秒に変更（デモ用）
-     - ファイル名を実ファイルに合わせて修正
+     事故情報スライドショー v0.1.2
+     - デフォルト秒数5秒
+     - PDFファイル名を短縮版（20260303-01.pdf 形式）に合わせて修正
      ======================================== */
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -97,20 +97,19 @@
 <script>
 /* ========================================
    設定：スライドに流すPDFのリスト
-   実ファイル名に合わせて記載
+   ファイル名はシンプルな「YYYYMMDD-NN.pdf」形式
    新しく追加したい時はこの配列に追記するだけ。
    ======================================== */
 const slides = [
-  "pdfs/S20260303-01_立防下部の笹竹伐採の際に手鎌で指を切る⇒軽傷.pdf",
-  "pdfs/S20260303-02_作業後の片付け時に伸縮はしごに指を挟む⇒重傷.pdf",
-  "pdfs/S20260316_02_【類似事故】高所作業車を用いた高架下作業における「はさまれ・巻き込まれ」事故.pdf",
-  "pdfs/S20260318-01_走行車線規制内の空ペール缶が追越車線に転がり一般車に接触⇒物損.pdf",
-  "pdfs/S20260318-02_シールド工事で作業床へ梯子から乗り移る際に梯子の固定が外れ落下⇒打撲(軽傷).pdf",
-  "pdfs/S20260318-03_ヤード内で側溝を上下反転させる際に親指を挟む⇒裂傷・骨折(重傷).pdf",
-  "pdfs/S20260331-01_シールドマシン工事で敷鉄板を荷降ろし時に誤って右手薬指を挟む⇒重傷.pdf",
-  "pdfs/S20260331-02_湿塩散布車点検中にステップ3段目から転落し左足首負傷⇒重傷.pdf",
-  "pdfs/S20260331-03_橋脚内部でプラ船容器を吊上げる際に容器が落下し作業員の顔に接触⇒軽傷.pdf",
-  "pdfs/S20260408_トールゲート基礎新設のため掘削時に管理図に無い給水を破損⇒料金所断水.pdf"
+  "pdfs/20260303-01.pdf",
+  "pdfs/20260303-02.pdf",
+  "pdfs/20260318-01.pdf",
+  "pdfs/20260318-02.pdf",
+  "pdfs/20260318-03.pdf",
+  "pdfs/20260331-01.pdf",
+  "pdfs/20260331-02.pdf",
+  "pdfs/20260331-03.pdf",
+  "pdfs/20260408-01.pdf"
 ];
 
 /* 状態管理 */
@@ -121,7 +120,6 @@ let timer = null;
 /* PDF表示を切り替える */
 function showSlide(index) {
   currentIndex = ((index % slides.length) + slides.length) % slides.length;
-  // PDFビューアの初期表示を「幅に合わせる」にする（#view=FitH）
   document.getElementById('slide').src = slides[currentIndex] + "#view=FitH&toolbar=0&navpanes=0";
   document.getElementById('counter').textContent = (currentIndex + 1) + " / " + slides.length;
   document.getElementById('status').textContent = decodeURIComponent(slides[currentIndex].split('/').pop());
@@ -131,8 +129,7 @@ function showSlide(index) {
 function next() { showSlide(currentIndex + 1); resetTimer(); }
 function prev() { showSlide(currentIndex - 1); resetTimer(); }
 
-/* 自動送りのタイマー
-   入力欄の秒数で全スライドを切り替える（全スライド共通） */
+/* 自動送りのタイマー（全スライド共通の秒数） */
 function resetTimer() {
   if (timer) clearInterval(timer);
   if (isPaused) return;
@@ -154,7 +151,7 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === ' ') { e.preventDefault(); togglePause(); }
 });
 
-/* マウスを画面下に持っていくと操作バーが出る */
+/* マウスを画面下に持っていくと操作バー表示 */
 document.getElementById('hover-zone').addEventListener('mouseenter', () => {
   document.getElementById('controls').classList.add('show');
 });
@@ -162,7 +159,7 @@ document.getElementById('controls').addEventListener('mouseleave', () => {
   document.getElementById('controls').classList.remove('show');
 });
 
-/* 秒数変更時にタイマーをリセット（次の切り替えから新しい秒数で動く） */
+/* 秒数変更時にタイマーリセット（即時反映） */
 document.getElementById('interval').addEventListener('change', resetTimer);
 document.getElementById('interval').addEventListener('input', resetTimer);
 
