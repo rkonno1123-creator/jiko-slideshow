@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Firebase Admin SDK サービスアカウントキー（絶対にcommitしない）
+firebase-admin-key.json
+
+# 業務データ（NEXCO事故情報）は GitHub に上げない
+scripts/*.csv
