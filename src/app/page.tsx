@@ -384,17 +384,30 @@ function SlideShow({
           <p className="text-gray-500">表示するスライドがありません</p>
         ) : current ? (
           <>
-            {/* 画像表示 */}
-            <div className="w-full flex-1 flex items-center justify-center mb-2">
+            {/* 画像表示（タップで再生/停止トグル） */}
+            <div
+              className="w-full flex-1 flex items-center justify-center mb-2 cursor-pointer relative"
+              onClick={() => setIsPlaying((p) => !p)}
+            >
               {currentImageUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={currentImageUrl}
                   alt={current.title}
                   className="max-w-full max-h-[75vh] object-contain shadow-lg"
+                  draggable={false}
                 />
               ) : (
                 <div className="text-gray-500">画像を読み込めません</div>
+              )}
+
+              {/* 停止中オーバーレイ */}
+              {!isPlaying && (
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <div className="bg-black/40 rounded-full w-20 h-20 flex items-center justify-center">
+                    <span className="text-white text-3xl">⏸</span>
+                  </div>
+                </div>
               )}
             </div>
 
