@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth, db, storage } from "@/lib/firebase";
 import { useAuth } from "@/lib/AuthContext";
@@ -8,7 +8,7 @@ import { collection, getDocs, query, where, orderBy } from "firebase/firestore";
 import { ref, getDownloadURL } from "firebase/storage";
 
 // ------------------------------------------------------------
-// 型定義（types.ts と一致させる）
+// 型定義
 // ------------------------------------------------------------
 type Accident = {
   id: string;
@@ -18,12 +18,14 @@ type Accident = {
   category: string;
   severity: string;
   orientation?: string;
-  pdfStoragePath?: string;
-  pdfDownloadUrl?: string; // クライアントで getDownloadURL した結果を入れる
+  imageStoragePaths?: string[];
+  imageDownloadUrls?: string[]; // クライアントで getDownloadURL した結果
 };
 
-// 表示モード
 type DisplayMode = "all" | "recent3" | "by_category";
+
+// デフォルト表示秒数
+const DEFAULT_INTERVAL_SECONDS = 15;
 
 // ============================================================
 // メインページ
@@ -35,9 +37,6 @@ export default function HomePage() {
   const [error, setError] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
 
-  // ----------------------------
-  // ログイン処理
-  // ----------------------------
   const handleLogin = async () => {
     setError("");
     setLoginLoading(true);
@@ -54,9 +53,6 @@ export default function HomePage() {
     }
   };
 
-  // ----------------------------
-  // 読み込み中
-  // ----------------------------
   if (loading) {
     return (
       <main className="min-h-screen flex items-center justify-center">
@@ -65,9 +61,6 @@ export default function HomePage() {
     );
   }
 
-  // ----------------------------
-  // 未ログイン → ログイン画面
-  // ----------------------------
   if (!user) {
     return (
       <main className="min-h-screen flex items-center justify-center p-4 bg-gray-50">
@@ -119,9 +112,6 @@ export default function HomePage() {
     );
   }
 
-  // ----------------------------
-  // ログイン済み → スライドショー
-  // ----------------------------
   return <SlideShow userEmail={user.email || ""} onLogout={logout} />;
 }
 
@@ -137,8 +127,42 @@ function SlideShow({
 }) {
   const [accidents, setAccidents] = useState<Accident[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [currentPageIndex, setCurrentPageIndex] = useState(0); // 複数ページ対応
   const [displayMode, setDisplayMode] = useState<DisplayMode>("recent3");
   const [loading, setLoading] = useState(true);
+  const [isPlaying, setIsPlaying] = useState(true);
+  const [intervalSeconds, setIntervalSeconds] = useState(
+    DEFAULT_INTERVAL_SECONDS
+  );
+
+  // ----------------------------
+  // localStorage から設定を読む
+  // ----------------------------
+  useEffect(() => {
+    const savedInterval = localStorage.getItem("intervalSeconds");
+    if (savedInterval) {
+      setIntervalSeconds(parseInt(savedInterval));
+    }
+    const savedMode = localStorage.getItem("displayMode") as DisplayMode | null;
+    if (savedMode) {
+      setDisplayMode(savedMode);
+    }
+  }, []);
+
+  // ----------------------------
+  // 設定を localStorage に保存
+  // ----------------------------
+  const updateInterval = (sec: number) => {
+    setIntervalSeconds(sec);
+    localStorage.setItem("intervalSeconds", String(sec));
+  };
+
+  const updateDisplayMode = (mode: DisplayMode) => {
+    setDisplayMode(mode);
+    setCurrentIndex(0);
+    setCurrentPageIndex(0);
+    localStorage.setItem("displayMode", mode);
+  };
 
   // ----------------------------
   // Firestore からデータ取得
@@ -147,7 +171,6 @@ function SlideShow({
     const fetchAccidents = async () => {
       setLoading(true);
       try {
-        // approved かつ 横A4 のみ取得
         const q = query(
           collection(db, "accidents"),
           where("status", "==", "approved"),
@@ -155,40 +178,47 @@ function SlideShow({
           orderBy("date", "desc")
         );
         const snapshot = await getDocs(q);
-        const items: Accident[] = [];
 
-        for (const docSnap of snapshot.docs) {
-          const data = docSnap.data();
+        // 並列でDownloadURL取得
+        const items = await Promise.all(
+          snapshot.docs.map(async (docSnap) => {
+            const data = docSnap.data();
 
-          // PDF の DownloadURL を取得（認証付き）
-          let downloadUrl = "";
-          if (data.pdfStoragePath) {
-            try {
-              const storageRef = ref(storage, data.pdfStoragePath);
-              downloadUrl = await getDownloadURL(storageRef);
-            } catch (e) {
-              console.error(
-                `PDF URL 取得失敗: ${data.pdfStoragePath}`,
-                e
+            const imageDownloadUrls: string[] = [];
+            if (Array.isArray(data.imageStoragePaths)) {
+              const urlPromises = data.imageStoragePaths.map(
+                async (storagePath: string) => {
+                  try {
+                    const storageRef = ref(storage, storagePath);
+                    return await getDownloadURL(storageRef);
+                  } catch (e) {
+                    console.error(`画像URL取得失敗: ${storagePath}`, e);
+                    return "";
+                  }
+                }
               );
+              const urls = await Promise.all(urlPromises);
+              imageDownloadUrls.push(...urls.filter((u) => u));
             }
-          }
 
-          items.push({
-            id: docSnap.id,
-            title: data.title,
-            date: data.date,
-            type: data.type,
-            category: data.category,
-            severity: data.severity,
-            orientation: data.orientation,
-            pdfStoragePath: data.pdfStoragePath,
-            pdfDownloadUrl: downloadUrl,
-          });
-        }
+            return {
+              id: docSnap.id,
+              title: data.title,
+              date: data.date,
+              type: data.type,
+              category: data.category,
+              severity: data.severity,
+              orientation: data.orientation,
+              imageStoragePaths: data.imageStoragePaths,
+              imageDownloadUrls,
+            } as Accident;
+          })
+        );
 
-        setAccidents(items);
+        // 画像があるものだけ表示
+        setAccidents(items.filter((a) => a.imageDownloadUrls && a.imageDownloadUrls.length > 0));
         setCurrentIndex(0);
+        setCurrentPageIndex(0);
       } catch (e) {
         console.error("データ取得失敗", e);
       } finally {
@@ -212,7 +242,6 @@ function SlideShow({
     }
 
     if (displayMode === "by_category") {
-      // カテゴリ別: 事故速報のみ
       return accidents.filter((a) => a.category === "事故速報");
     }
 
@@ -221,34 +250,76 @@ function SlideShow({
 
   // currentIndex が範囲外になったらリセット
   useEffect(() => {
-    if (currentIndex >= filteredAccidents.length && filteredAccidents.length > 0) {
+    if (
+      currentIndex >= filteredAccidents.length &&
+      filteredAccidents.length > 0
+    ) {
       setCurrentIndex(0);
+      setCurrentPageIndex(0);
     }
   }, [filteredAccidents, currentIndex]);
 
   const current = filteredAccidents[currentIndex];
+  const currentImageUrl =
+    current?.imageDownloadUrls?.[currentPageIndex] || "";
+  const totalPages = current?.imageDownloadUrls?.length || 1;
 
   // ----------------------------
-  // 自動送り(15秒ごと)
+  // 自動送り
   // ----------------------------
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
   useEffect(() => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (!isPlaying) return;
     if (filteredAccidents.length === 0) return;
-    const timer = setInterval(() => {
-      setCurrentIndex((prev) => (prev + 1) % filteredAccidents.length);
-    }, 15000);
-    return () => clearInterval(timer);
-  }, [filteredAccidents.length]);
+
+    timerRef.current = setInterval(() => {
+      // 複数ページある場合: 次のページへ
+      // 最終ページなら次のスライドへ
+      if (currentPageIndex < totalPages - 1) {
+        setCurrentPageIndex((prev) => prev + 1);
+      } else {
+        setCurrentPageIndex(0);
+        setCurrentIndex((prev) => (prev + 1) % filteredAccidents.length);
+      }
+    }, intervalSeconds * 1000);
+
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [
+    isPlaying,
+    filteredAccidents.length,
+    intervalSeconds,
+    currentPageIndex,
+    totalPages,
+  ]);
 
   // ----------------------------
   // 手動操作
   // ----------------------------
-  const goNext = () =>
-    setCurrentIndex((prev) => (prev + 1) % filteredAccidents.length);
-  const goPrev = () =>
-    setCurrentIndex(
-      (prev) =>
-        (prev - 1 + filteredAccidents.length) % filteredAccidents.length
-    );
+  const goNext = () => {
+    if (currentPageIndex < totalPages - 1) {
+      setCurrentPageIndex((prev) => prev + 1);
+    } else {
+      setCurrentPageIndex(0);
+      setCurrentIndex((prev) => (prev + 1) % filteredAccidents.length);
+    }
+  };
+
+  const goPrev = () => {
+    if (currentPageIndex > 0) {
+      setCurrentPageIndex((prev) => prev - 1);
+    } else {
+      const newIdx =
+        (currentIndex - 1 + filteredAccidents.length) %
+        filteredAccidents.length;
+      setCurrentIndex(newIdx);
+      const newTotalPages =
+        filteredAccidents[newIdx]?.imageDownloadUrls?.length || 1;
+      setCurrentPageIndex(newTotalPages - 1);
+    }
+  };
 
   // ----------------------------
   // 表示
@@ -256,25 +327,46 @@ function SlideShow({
   return (
     <div className="min-h-screen flex flex-col">
       {/* ヘッダー */}
-      <header className="bg-white border-b px-4 py-3 flex items-center justify-between">
+      <header className="bg-white border-b px-3 py-2 flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h1 className="font-bold text-lg">事故情報スライドショー</h1>
+          <h1 className="font-bold text-base sm:text-lg">事故情報スライドショー</h1>
           <p className="text-xs text-gray-500">{userEmail}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {/* 表示モード切替 */}
           <select
             value={displayMode}
-            onChange={(e) => {
-              setDisplayMode(e.target.value as DisplayMode);
-              setCurrentIndex(0);
-            }}
+            onChange={(e) => updateDisplayMode(e.target.value as DisplayMode)}
             className="border rounded px-2 py-1 text-sm"
           >
             <option value="recent3">直近3ヶ月</option>
             <option value="all">全件</option>
             <option value="by_category">事故速報のみ</option>
           </select>
+
+          {/* 秒数切替 */}
+          <select
+            value={intervalSeconds}
+            onChange={(e) => updateInterval(parseInt(e.target.value))}
+            className="border rounded px-2 py-1 text-sm"
+          >
+            <option value="5">5秒</option>
+            <option value="10">10秒</option>
+            <option value="15">15秒</option>
+            <option value="30">30秒</option>
+            <option value="60">60秒</option>
+          </select>
+
+          {/* 再生/停止 */}
+          <button
+            onClick={() => setIsPlaying((p) => !p)}
+            className={`px-3 py-1 rounded text-sm text-white ${
+              isPlaying ? "bg-orange-500 hover:bg-orange-600" : "bg-green-600 hover:bg-green-700"
+            }`}
+          >
+            {isPlaying ? "⏸ 停止" : "▶ 再生"}
+          </button>
+
           <button
             onClick={onLogout}
             className="bg-gray-500 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm"
@@ -285,52 +377,55 @@ function SlideShow({
       </header>
 
       {/* メイン */}
-      <main className="flex-1 flex flex-col items-center justify-center p-4">
+      <main className="flex-1 flex flex-col items-center justify-center p-2 sm:p-4">
         {loading ? (
           <p className="text-gray-500">読み込み中...</p>
         ) : filteredAccidents.length === 0 ? (
           <p className="text-gray-500">表示するスライドがありません</p>
         ) : current ? (
           <>
-            {/* PDF 表示 */}
-            <div className="w-full max-w-5xl bg-white shadow-lg rounded mb-4">
-              {current.pdfDownloadUrl ? (
-                <iframe
-                  src={current.pdfDownloadUrl}
-                  className="w-full"
-                  style={{ height: "70vh" }}
-                  title={current.title}
+            {/* 画像表示 */}
+            <div className="w-full flex-1 flex items-center justify-center mb-2">
+              {currentImageUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={currentImageUrl}
+                  alt={current.title}
+                  className="max-w-full max-h-[75vh] object-contain shadow-lg"
                 />
               ) : (
-                <div className="p-8 text-center text-gray-500">
-                  PDF を読み込めません
-                </div>
+                <div className="text-gray-500">画像を読み込めません</div>
               )}
             </div>
 
             {/* 情報 */}
-            <div className="text-center mb-2">
-              <p className="text-sm text-gray-600">
+            <div className="text-center mb-2 px-2">
+              <p className="text-xs sm:text-sm text-gray-600">
                 {current.date} | {current.category} | {current.type} |{" "}
                 {current.severity}
               </p>
-              <p className="font-bold">{current.title}</p>
+              <p className="font-bold text-sm sm:text-base">{current.title}</p>
             </div>
 
             {/* 操作 */}
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3 sm:gap-4 pb-2">
               <button
                 onClick={goPrev}
-                className="bg-gray-200 hover:bg-gray-300 px-4 py-2 rounded"
+                className="bg-gray-200 hover:bg-gray-300 px-3 sm:px-4 py-2 rounded text-sm"
               >
                 ← 前
               </button>
-              <span className="text-sm text-gray-600">
+              <span className="text-xs sm:text-sm text-gray-600">
                 {currentIndex + 1} / {filteredAccidents.length}
+                {totalPages > 1 && (
+                  <span className="ml-2 text-blue-600">
+                    (ページ {currentPageIndex + 1}/{totalPages})
+                  </span>
+                )}
               </span>
               <button
                 onClick={goNext}
-                className="bg-gray-200 hover:bg-gray-300 px-4 py-2 rounded"
+                className="bg-gray-200 hover:bg-gray-300 px-3 sm:px-4 py-2 rounded text-sm"
               >
                 次 →
               </button>
