@@ -274,11 +274,9 @@ function SlideShow({
   // 手動操作（useCallbackで包む = キーボード操作のuseEffectで使うため）
   // ----------------------------
   const goNext = useCallback(() => {
-    if (isFullscreen) {
-      setIsImageLoading(true);
-      setLastTapped("right");
-      setTimeout(() => setLastTapped(null), 300);
-    }
+    if (isFullscreen) setIsImageLoading(true);
+    setLastTapped("right");
+    setTimeout(() => setLastTapped(null), 300);
     if (currentPageIndex < totalPages - 1) {
       setCurrentPageIndex((prev) => prev + 1);
     } else {
@@ -288,11 +286,9 @@ function SlideShow({
   }, [currentPageIndex, totalPages, filteredAccidents.length, isFullscreen]);
 
   const goPrev = useCallback(() => {
-    if (isFullscreen) {
-      setIsImageLoading(true);
-      setLastTapped("left");
-      setTimeout(() => setLastTapped(null), 300);
-    }
+    if (isFullscreen) setIsImageLoading(true);
+    setLastTapped("left");
+    setTimeout(() => setLastTapped(null), 300);
     if (currentPageIndex > 0) {
       setCurrentPageIndex((prev) => prev - 1);
     } else {
@@ -320,6 +316,8 @@ function SlideShow({
     if (filteredAccidents.length === 0) return;
 
     timerRef.current = setInterval(() => {
+      // 自動送り時も全画面ならフェード演出
+      if (isFullscreen) setIsImageLoading(true);
       // 複数ページある場合: 次のページへ
       // 最終ページなら次のスライドへ
       if (currentPageIndex < totalPages - 1) {
@@ -339,6 +337,7 @@ function SlideShow({
     intervalSeconds,
     currentPageIndex,
     totalPages,
+    isFullscreen,
   ]);
 
   // ----------------------------
@@ -492,7 +491,7 @@ function SlideShow({
                 <span
                   className={`text-white text-3xl sm:text-4xl rounded-full w-12 h-12 sm:w-14 sm:h-14 flex items-center justify-center transition-all duration-200 ${
                     lastTapped === "left"
-                      ? "bg-blue-500 opacity-100 scale-125"
+                      ? "bg-green-600 opacity-100 scale-125"
                       : "bg-black/30 group-hover:bg-black/60 opacity-40 group-hover:opacity-90"
                   }`}
                 >
@@ -516,7 +515,7 @@ function SlideShow({
                 <span
                   className={`text-white text-3xl sm:text-4xl rounded-full w-12 h-12 sm:w-14 sm:h-14 flex items-center justify-center transition-all duration-200 ${
                     lastTapped === "right"
-                      ? "bg-blue-500 opacity-100 scale-125"
+                      ? "bg-green-600 opacity-100 scale-125"
                       : "bg-black/30 group-hover:bg-black/60 opacity-40 group-hover:opacity-90"
                   }`}
                 >
