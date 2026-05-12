@@ -458,7 +458,7 @@ function SlideShow({
       )}
 
       {/* メイン */}
-      <main className="flex-1 flex flex-col items-center justify-center p-2 sm:p-4">
+      <main className={`flex-1 flex flex-col items-center justify-center ${isFullscreen ? "p-0" : "p-2 sm:p-4"}`}>
         {loading ? (
           <p className="text-gray-500">読み込み中...</p>
         ) : filteredAccidents.length === 0 ? (
@@ -466,15 +466,15 @@ function SlideShow({
         ) : current ? (
           <>
             {/* 画像表示エリア（タップ領域を3分割） */}
-            <div className="w-full flex-1 flex items-center justify-center mb-2 relative select-none">
+            <div className={`w-full flex items-center justify-center relative select-none ${isFullscreen ? "flex-1 h-full mb-0" : "flex-1 mb-2"}`}>
               {currentImageUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={currentImageUrl}
                   alt={current.title}
                   onLoad={() => setIsImageLoading(false)}
-                  className={`max-w-full object-contain shadow-lg pointer-events-none transition-opacity duration-200 ${
-                    isFullscreen ? "max-h-screen" : "max-h-[75vh]"
+                  className={`max-w-full object-contain pointer-events-none transition-opacity duration-200 ${
+                    isFullscreen ? "max-h-screen h-screen w-screen" : "max-h-[75vh] shadow-lg"
                   } ${isFullscreen && isImageLoading ? "opacity-30" : "opacity-100"}`}
                   draggable={false}
                 />
