@@ -395,7 +395,7 @@ function SlideShow({
   // 表示
   // ----------------------------
   return (
-    <div ref={containerRef} className="min-h-screen flex flex-col bg-white">
+    <div ref={containerRef} className="min-h-screen flex flex-col bg-white" style={isFullscreen ? { height: "100dvh", minHeight: "100dvh" } : undefined}>
       {/* ヘッダー（全画面時は非表示） */}
       {!isFullscreen && (
         <header className="bg-white border-b px-3 py-2 flex flex-wrap items-center justify-between gap-2">
@@ -473,8 +473,9 @@ function SlideShow({
                   src={currentImageUrl}
                   alt={current.title}
                   onLoad={() => setIsImageLoading(false)}
+                  style={isFullscreen ? { maxHeight: "100dvh", height: "100dvh" } : undefined}
                   className={`max-w-full object-contain pointer-events-none transition-opacity duration-200 ${
-                    isFullscreen ? "max-h-screen h-screen w-screen" : "max-h-[75vh] shadow-lg"
+                    isFullscreen ? "w-screen" : "max-h-[75vh] shadow-lg"
                   } ${isFullscreen && isImageLoading ? "opacity-30" : "opacity-100"}`}
                   draggable={false}
                 />
