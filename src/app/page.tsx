@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth, db, storage } from "@/lib/firebase";
 import { useAuth } from "@/lib/AuthContext";
@@ -134,6 +134,12 @@ function SlideShow({
   const [intervalSeconds, setIntervalSeconds] = useState(
     DEFAULT_INTERVAL_SECONDS
   );
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isImageLoading, setIsImageLoading] = useState(false);
+  const [lastTapped, setLastTapped] = useState<"left" | "right" | null>(null);
+
+  // 全画面化の対象になる要素を掴むためのref
+  const containerRef = useRef<HTMLDivElement>(null);
 
   // ----------------------------
   // localStorage から設定を読む
@@ -265,6 +271,46 @@ function SlideShow({
   const totalPages = current?.imageDownloadUrls?.length || 1;
 
   // ----------------------------
+  // 手動操作（useCallbackで包む = キーボード操作のuseEffectで使うため）
+  // ----------------------------
+  const goNext = useCallback(() => {
+    if (isFullscreen) {
+      setIsImageLoading(true);
+      setLastTapped("right");
+      setTimeout(() => setLastTapped(null), 300);
+    }
+    if (currentPageIndex < totalPages - 1) {
+      setCurrentPageIndex((prev) => prev + 1);
+    } else {
+      setCurrentPageIndex(0);
+      setCurrentIndex((prev) => (prev + 1) % filteredAccidents.length);
+    }
+  }, [currentPageIndex, totalPages, filteredAccidents.length, isFullscreen]);
+
+  const goPrev = useCallback(() => {
+    if (isFullscreen) {
+      setIsImageLoading(true);
+      setLastTapped("left");
+      setTimeout(() => setLastTapped(null), 300);
+    }
+    if (currentPageIndex > 0) {
+      setCurrentPageIndex((prev) => prev - 1);
+    } else {
+      const newIdx =
+        (currentIndex - 1 + filteredAccidents.length) %
+        filteredAccidents.length;
+      setCurrentIndex(newIdx);
+      const newTotalPages =
+        filteredAccidents[newIdx]?.imageDownloadUrls?.length || 1;
+      setCurrentPageIndex(newTotalPages - 1);
+    }
+  }, [currentPageIndex, currentIndex, filteredAccidents, isFullscreen]);
+
+  const togglePlay = useCallback(() => {
+    setIsPlaying((p) => !p);
+  }, []);
+
+  // ----------------------------
   // 自動送り
   // ----------------------------
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -296,85 +342,121 @@ function SlideShow({
   ]);
 
   // ----------------------------
-  // 手動操作
+  // 全画面表示
   // ----------------------------
-  const goNext = () => {
-    if (currentPageIndex < totalPages - 1) {
-      setCurrentPageIndex((prev) => prev + 1);
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      containerRef.current?.requestFullscreen().catch((err) => {
+        console.error("全画面表示に失敗:", err);
+      });
     } else {
-      setCurrentPageIndex(0);
-      setCurrentIndex((prev) => (prev + 1) % filteredAccidents.length);
+      document.exitFullscreen();
     }
-  };
+  }, []);
 
-  const goPrev = () => {
-    if (currentPageIndex > 0) {
-      setCurrentPageIndex((prev) => prev - 1);
-    } else {
-      const newIdx =
-        (currentIndex - 1 + filteredAccidents.length) %
-        filteredAccidents.length;
-      setCurrentIndex(newIdx);
-      const newTotalPages =
-        filteredAccidents[newIdx]?.imageDownloadUrls?.length || 1;
-      setCurrentPageIndex(newTotalPages - 1);
-    }
-  };
+  // 全画面状態の変化を監視（Escキーで抜けた時もボタン表示を同期させるため）
+  useEffect(() => {
+    const handleChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener("fullscreenchange", handleChange);
+    return () => document.removeEventListener("fullscreenchange", handleChange);
+  }, []);
+
+  // ----------------------------
+  // キーボード操作（← → Space F）
+  // ----------------------------
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      // input/textarea にフォーカスがあるときは無効化
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT") {
+        return;
+      }
+
+      if (e.key === "ArrowRight") {
+        e.preventDefault();
+        goNext();
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        goPrev();
+      } else if (e.key === " ") {
+        e.preventDefault();
+        togglePlay();
+      } else if (e.key === "f" || e.key === "F") {
+        e.preventDefault();
+        toggleFullscreen();
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [goNext, goPrev, togglePlay, toggleFullscreen]);
 
   // ----------------------------
   // 表示
   // ----------------------------
   return (
-    <div className="min-h-screen flex flex-col">
-      {/* ヘッダー */}
-      <header className="bg-white border-b px-3 py-2 flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h1 className="font-bold text-base sm:text-lg">事故情報スライドショー</h1>
-          <p className="text-xs text-gray-500">{userEmail}</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {/* 表示モード切替 */}
-          <select
-            value={displayMode}
-            onChange={(e) => updateDisplayMode(e.target.value as DisplayMode)}
-            className="border rounded px-2 py-1 text-sm"
-          >
-            <option value="recent3">直近3ヶ月</option>
-            <option value="all">全件</option>
-            <option value="by_category">事故速報のみ</option>
-          </select>
+    <div ref={containerRef} className="min-h-screen flex flex-col bg-white">
+      {/* ヘッダー（全画面時は非表示） */}
+      {!isFullscreen && (
+        <header className="bg-white border-b px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h1 className="font-bold text-base sm:text-lg">事故情報スライドショー</h1>
+            <p className="text-xs text-gray-500">{userEmail}</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {/* 表示モード切替 */}
+            <select
+              value={displayMode}
+              onChange={(e) => updateDisplayMode(e.target.value as DisplayMode)}
+              className="border rounded px-2 py-1 text-sm"
+            >
+              <option value="recent3">直近3ヶ月</option>
+              <option value="all">全件</option>
+              <option value="by_category">事故速報のみ</option>
+            </select>
 
-          {/* 秒数切替 */}
-          <select
-            value={intervalSeconds}
-            onChange={(e) => updateInterval(parseInt(e.target.value))}
-            className="border rounded px-2 py-1 text-sm"
-          >
-            <option value="5">5秒</option>
-            <option value="10">10秒</option>
-            <option value="15">15秒</option>
-            <option value="30">30秒</option>
-            <option value="60">60秒</option>
-          </select>
+            {/* 秒数切替 */}
+            <select
+              value={intervalSeconds}
+              onChange={(e) => updateInterval(parseInt(e.target.value))}
+              className="border rounded px-2 py-1 text-sm"
+            >
+              <option value="5">5秒</option>
+              <option value="10">10秒</option>
+              <option value="15">15秒</option>
+              <option value="30">30秒</option>
+              <option value="60">60秒</option>
+            </select>
 
-          {/* 再生/停止 */}
-          <button
-            onClick={() => setIsPlaying((p) => !p)}
-            className={`px-3 py-1 rounded text-sm text-white ${
-              isPlaying ? "bg-orange-500 hover:bg-orange-600" : "bg-green-600 hover:bg-green-700"
-            }`}
-          >
-            {isPlaying ? "⏸ 停止" : "▶ 再生"}
-          </button>
+            {/* 再生/停止 */}
+            <button
+              onClick={togglePlay}
+              className={`px-3 py-1 rounded text-sm text-white ${
+                isPlaying ? "bg-orange-500 hover:bg-orange-600" : "bg-green-600 hover:bg-green-700"
+              }`}
+            >
+              {isPlaying ? "⏸ 停止" : "▶ 再生"}
+            </button>
 
-          <button
-            onClick={onLogout}
-            className="bg-gray-500 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm"
-          >
-            ログアウト
-          </button>
-        </div>
-      </header>
+            {/* 全画面ボタン */}
+            <button
+              onClick={toggleFullscreen}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm"
+              title="全画面表示 (F)"
+            >
+              ⛶ 全画面
+            </button>
+
+            <button
+              onClick={onLogout}
+              className="bg-gray-500 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm"
+            >
+              ログアウト
+            </button>
+          </div>
+        </header>
+      )}
 
       {/* メイン */}
       <main className="flex-1 flex flex-col items-center justify-center p-2 sm:p-4">
@@ -384,22 +466,63 @@ function SlideShow({
           <p className="text-gray-500">表示するスライドがありません</p>
         ) : current ? (
           <>
-            {/* 画像表示（タップで再生/停止トグル） */}
-            <div
-              className="w-full flex-1 flex items-center justify-center mb-2 cursor-pointer relative"
-              onClick={() => setIsPlaying((p) => !p)}
-            >
+            {/* 画像表示エリア（タップ領域を3分割） */}
+            <div className="w-full flex-1 flex items-center justify-center mb-2 relative select-none">
               {currentImageUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={currentImageUrl}
                   alt={current.title}
-                  className="max-w-full max-h-[75vh] object-contain shadow-lg"
+                  onLoad={() => setIsImageLoading(false)}
+                  className={`max-w-full object-contain shadow-lg pointer-events-none transition-opacity duration-200 ${
+                    isFullscreen ? "max-h-screen" : "max-h-[75vh]"
+                  } ${isFullscreen && isImageLoading ? "opacity-30" : "opacity-100"}`}
                   draggable={false}
                 />
               ) : (
                 <div className="text-gray-500">画像を読み込めません</div>
               )}
+
+              {/* 左タップゾーン（前のスライドへ） */}
+              <button
+                onClick={goPrev}
+                className="absolute left-0 top-0 w-1/3 h-full flex items-center justify-start pl-2 sm:pl-4 group cursor-pointer"
+                aria-label="前のスライド"
+              >
+                <span
+                  className={`text-white text-3xl sm:text-4xl rounded-full w-12 h-12 sm:w-14 sm:h-14 flex items-center justify-center transition-all duration-200 ${
+                    lastTapped === "left"
+                      ? "bg-blue-500 opacity-100 scale-125"
+                      : "bg-black/30 group-hover:bg-black/60 opacity-40 group-hover:opacity-90"
+                  }`}
+                >
+                  ‹
+                </span>
+              </button>
+
+              {/* 中央タップゾーン（再生/停止トグル） */}
+              <button
+                onClick={togglePlay}
+                className="absolute left-1/3 top-0 w-1/3 h-full cursor-pointer"
+                aria-label="再生/停止"
+              />
+
+              {/* 右タップゾーン（次のスライドへ） */}
+              <button
+                onClick={goNext}
+                className="absolute right-0 top-0 w-1/3 h-full flex items-center justify-end pr-2 sm:pr-4 group cursor-pointer"
+                aria-label="次のスライド"
+              >
+                <span
+                  className={`text-white text-3xl sm:text-4xl rounded-full w-12 h-12 sm:w-14 sm:h-14 flex items-center justify-center transition-all duration-200 ${
+                    lastTapped === "right"
+                      ? "bg-blue-500 opacity-100 scale-125"
+                      : "bg-black/30 group-hover:bg-black/60 opacity-40 group-hover:opacity-90"
+                  }`}
+                >
+                  ›
+                </span>
+              </button>
 
               {/* 停止中オーバーレイ */}
               {!isPlaying && (
@@ -411,38 +534,41 @@ function SlideShow({
               )}
             </div>
 
-            {/* 情報 */}
-            <div className="text-center mb-2 px-2">
-              <p className="text-xs sm:text-sm text-gray-600">
-                {current.date} | {current.category} | {current.type} |{" "}
-                {current.severity}
-              </p>
-              <p className="font-bold text-sm sm:text-base">{current.title}</p>
-            </div>
+            {/* 情報・フッター（全画面時は非表示） */}
+            {!isFullscreen && (
+              <>
+                <div className="text-center mb-2 px-2">
+                  <p className="text-xs sm:text-sm text-gray-600">
+                    {current.date} | {current.category} | {current.type} |{" "}
+                    {current.severity}
+                  </p>
+                  <p className="font-bold text-sm sm:text-base">{current.title}</p>
+                </div>
 
-            {/* 操作 */}
-            <div className="flex items-center gap-3 sm:gap-4 pb-2">
-              <button
-                onClick={goPrev}
-                className="bg-gray-200 hover:bg-gray-300 px-3 sm:px-4 py-2 rounded text-sm"
-              >
-                ← 前
-              </button>
-              <span className="text-xs sm:text-sm text-gray-600">
-                {currentIndex + 1} / {filteredAccidents.length}
-                {totalPages > 1 && (
-                  <span className="ml-2 text-blue-600">
-                    (ページ {currentPageIndex + 1}/{totalPages})
+                <div className="flex items-center gap-3 sm:gap-4 pb-2">
+                  <button
+                    onClick={goPrev}
+                    className="bg-gray-200 hover:bg-gray-300 px-3 sm:px-4 py-2 rounded text-sm"
+                  >
+                    ← 前
+                  </button>
+                  <span className="text-xs sm:text-sm text-gray-600">
+                    {currentIndex + 1} / {filteredAccidents.length}
+                    {totalPages > 1 && (
+                      <span className="ml-2 text-blue-600">
+                        (ページ {currentPageIndex + 1}/{totalPages})
+                      </span>
+                    )}
                   </span>
-                )}
-              </span>
-              <button
-                onClick={goNext}
-                className="bg-gray-200 hover:bg-gray-300 px-3 sm:px-4 py-2 rounded text-sm"
-              >
-                次 →
-              </button>
-            </div>
+                  <button
+                    onClick={goNext}
+                    className="bg-gray-200 hover:bg-gray-300 px-3 sm:px-4 py-2 rounded text-sm"
+                  >
+                    次 →
+                  </button>
+                </div>
+              </>
+            )}
           </>
         ) : null}
       </main>
