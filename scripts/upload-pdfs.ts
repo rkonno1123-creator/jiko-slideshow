@@ -42,8 +42,15 @@ const bucket = admin.storage().bucket();
 // ------------------------------------------------------------
 // ヘルパー: id から該当 PDF ファイルを探す
 //   例: id="20260105-01" → "S20260105-01_*.pdf" にマッチするものを返す
+//
+//   第2引数 originalFileName:
+//     自社作成スライド（例: "死亡事故_0608北陸道.pdf" や "熱中症_暑熱順化編.pdf"）は
+//     "S{id}_" の命名規則に従わないため、S形式で見つからなかった場合の
+//     フォールバックとして、CSV由来のファイル名（originalFileName）で直接探す。
+//     ※ファイル名は「人間が見て中身がわかる名前」のまま運用するための仕組み。
+//       発注元PDFは S始まり、自社文書は意味のある名前、という区別を保てる。
 // ------------------------------------------------------------
-function findPdfFile(id: string): string | null {
+function findPdfFile(id: string, originalFileName?: string): string | null {
   const files = fs.readdirSync(PDF_SOURCE_DIR);
 
   // 例: "20260408-" のような末尾ハイフン id の場合は素直に処理
@@ -54,7 +61,7 @@ function findPdfFile(id: string): string | null {
   const idVariants = [cleanId, cleanId.replace(/-/g, "_")];
 
   for (const idVariant of idVariants) {
-    // パターン1: S{id}_ で始まる
+    // パターン1: S{id}_ で始まる（発注元のNEXCO等のPDF）
     const pattern1 = files.find(
       (f) => f.startsWith(`S${idVariant}_`) && f.endsWith(".pdf")
     );
@@ -65,6 +72,14 @@ function findPdfFile(id: string): string | null {
       (f) => f.startsWith(`縦_S${idVariant}_`) && f.endsWith(".pdf")
     );
     if (pattern2) return pattern2;
+  }
+
+  // パターン3（フォールバック）: 自社作成スライド
+  //   S形式で見つからなければ、CSVのファイル名（originalFileName）で直接探す。
+  //   例: "死亡事故_0608北陸道.pdf" "安全活動方針_2026.pdf" "熱中症_暑熱順化編.pdf"
+  if (originalFileName) {
+    const exact = files.find((f) => f === originalFileName);
+    if (exact) return exact;
   }
 
   return null;
@@ -87,8 +102,13 @@ async function main() {
     const id = doc.id;
 
     try {
-      // PDF ファイルを探す
-      const sourceFileName = findPdfFile(id);
+      // ドキュメントに保存された元ファイル名（import-csv が originalFileName として保存）
+      // これを自社文書のフォールバック探索に使う。
+      const data = doc.data();
+      const originalFileName: string | undefined = data.originalFileName;
+
+      // PDF ファイルを探す（S形式 → ダメなら originalFileName）
+      const sourceFileName = findPdfFile(id, originalFileName);
 
       if (!sourceFileName) {
         console.log(`⚠️  ${id}: PDF が見つからない`);

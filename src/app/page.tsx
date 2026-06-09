@@ -20,12 +20,69 @@ type Accident = {
   orientation?: string;
   imageStoragePaths?: string[];
   imageDownloadUrls?: string[]; // クライアントで getDownloadURL した結果
+  visiblePages?: number[]; // 表示するページ番号(1始まり)。未設定なら全ページ表示
 };
 
-type DisplayMode = "all" | "recent3" | "by_category";
+// 表示モード: 直近3ヶ月 / 全件 / 事故速報のみ / 最近(自社整備分) / ランダム交互
+type DisplayMode =
+  | "all"
+  | "recent3"
+  | "by_category"
+  | "recent_self"
+  | "random_alt";
 
 // デフォルト表示秒数
 const DEFAULT_INTERVAL_SECONDS = 15;
+
+// 「死亡事故」と判定する severity の値
+const FATAL_SEVERITIES = ["死亡", "死傷", "2名死亡", "死亡事故"];
+function isFatal(severity: string | undefined): boolean {
+  if (!severity) return false;
+  return FATAL_SEVERITIES.some((s) => severity.includes(s)) || severity.includes("死");
+}
+
+// 「自社整備分」と判定するカテゴリ(アピール用の最近フィルタ・交互表示で使用)
+// 判定は category のみで行う。severityの「死」は使わない——
+// 発注者の死亡事故(category=事故速報)まで自社扱いになるのを防ぐため。
+// 自社の死亡事故教材は category="死亡事故" で登録すること。
+const SELF_MADE_CATEGORIES = ["熱中症対策", "方針", "通達", "死亡事故"];
+function isSelfMade(a: Accident): boolean {
+  return SELF_MADE_CATEGORIES.includes(a.category);
+}
+
+// ------------------------------------------------------------
+// 配列をランダムに並べ替える（Fisher-Yates シャッフル）
+// 元の配列は変更せず、新しい配列を返す。
+// ------------------------------------------------------------
+function shuffle<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// ------------------------------------------------------------
+// ランダム交互表示の並びを作る（自社:発注者 = 1:1）
+//   自社資料グループと発注者資料グループをそれぞれランダムに並べ、
+//   交互（自社→発注者→自社→…）に1件ずつ取り出して1本にする。
+//   片方が尽きたら残りはもう片方を続ける。
+//   → 「自社資料が2枚に1回出る」＋「順番はランダム」を両立。
+//   将来 2:1 等にしたくなったら、ここを重み付きに変更する（Obsidianメモ参照）。
+// ------------------------------------------------------------
+function buildAlternating(items: Accident[]): Accident[] {
+  const self = shuffle(items.filter((a) => isSelfMade(a)));
+  const other = shuffle(items.filter((a) => !isSelfMade(a)));
+  const result: Accident[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < self.length || j < other.length) {
+    if (i < self.length) result.push(self[i++]);
+    if (j < other.length) result.push(other[j++]);
+  }
+  return result;
+}
 
 // ============================================================
 // メインページ
@@ -137,6 +194,9 @@ function SlideShow({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isImageLoading, setIsImageLoading] = useState(false);
   const [lastTapped, setLastTapped] = useState<"left" | "right" | null>(null);
+  // ランダム交互モード用：並びを固定するためのシャッフル結果。
+  // モード切替やデータ更新のたびに作り直す（毎フレーム再シャッフルしない）。
+  const [randomOrder, setRandomOrder] = useState<Accident[]>([]);
 
   // 全画面化の対象になる要素を掴むためのref
   const containerRef = useRef<HTMLDivElement>(null);
@@ -190,22 +250,32 @@ function SlideShow({
           snapshot.docs.map(async (docSnap) => {
             const data = docSnap.data();
 
+            // ページ単位の表示/非表示
+            // visiblePages が配列で入っていれば、そのページ(1始まり)だけ採用する。
+            // 例: imageStoragePaths が [1.png,2.png,3.png] で visiblePages=[1,3] なら 2ページ目を隠す。
+            const allPaths: string[] = Array.isArray(data.imageStoragePaths)
+              ? data.imageStoragePaths
+              : [];
+            const visiblePages: number[] | undefined = Array.isArray(data.visiblePages)
+              ? data.visiblePages
+              : undefined;
+            const usePaths =
+              visiblePages && visiblePages.length > 0
+                ? allPaths.filter((_, idx) => visiblePages.includes(idx + 1))
+                : allPaths;
+
             const imageDownloadUrls: string[] = [];
-            if (Array.isArray(data.imageStoragePaths)) {
-              const urlPromises = data.imageStoragePaths.map(
-                async (storagePath: string) => {
-                  try {
-                    const storageRef = ref(storage, storagePath);
-                    return await getDownloadURL(storageRef);
-                  } catch (e) {
-                    console.error(`画像URL取得失敗: ${storagePath}`, e);
-                    return "";
-                  }
-                }
-              );
-              const urls = await Promise.all(urlPromises);
-              imageDownloadUrls.push(...urls.filter((u) => u));
-            }
+            const urlPromises = usePaths.map(async (storagePath: string) => {
+              try {
+                const storageRef = ref(storage, storagePath);
+                return await getDownloadURL(storageRef);
+              } catch (e) {
+                console.error(`画像URL取得失敗: ${storagePath}`, e);
+                return "";
+              }
+            });
+            const urls = await Promise.all(urlPromises);
+            imageDownloadUrls.push(...urls.filter((u) => u));
 
             return {
               id: docSnap.id,
@@ -217,6 +287,7 @@ function SlideShow({
               orientation: data.orientation,
               imageStoragePaths: data.imageStoragePaths,
               imageDownloadUrls,
+              visiblePages,
             } as Accident;
           })
         );
@@ -251,8 +322,34 @@ function SlideShow({
       return accidents.filter((a) => a.category === "事故速報");
     }
 
+    // 最近(自社整備分): 自社で作成・整備したスライド(死亡事故/熱中症/方針など)を表示。
+    // 発注者アピール用。当初は直近1ヶ月で絞っていたが、方針(4月)や死亡事故(3〜4月)も
+    // 見せたいため期間制限は解除し、自社作成分は全部出す。
+    if (displayMode === "recent_self") {
+      return accidents.filter((a) => isSelfMade(a));
+    }
+
+    // ランダム交互: 全件を対象に、自社:発注者=1:1 で交互＆ランダムに並べる。
+    // 並びは randomOrder（useEffectで作成）を使う。
+    if (displayMode === "random_alt") {
+      return randomOrder;
+    }
+
     return accidents;
   })();
+
+  // ----------------------------
+  // ランダム交互モードの並びを作る
+  //   accidents が変わったとき、または random_alt に切り替えたときに
+  //   一度だけシャッフルして固定する（毎フレーム再シャッフルしない）。
+  // ----------------------------
+  useEffect(() => {
+    if (displayMode === "random_alt") {
+      setRandomOrder(buildAlternating(accidents));
+      setCurrentIndex(0);
+      setCurrentPageIndex(0);
+    }
+  }, [displayMode, accidents]);
 
   // currentIndex が範囲外になったらリセット
   useEffect(() => {
@@ -269,6 +366,7 @@ function SlideShow({
   const currentImageUrl =
     current?.imageDownloadUrls?.[currentPageIndex] || "";
   const totalPages = current?.imageDownloadUrls?.length || 1;
+  const currentIsFatal = isFatal(current?.severity);
 
   // ----------------------------
   // 手動操作（useCallbackで包む = キーボード操作のuseEffectで使うため）
@@ -413,6 +511,8 @@ function SlideShow({
               <option value="recent3">直近3ヶ月</option>
               <option value="all">全件</option>
               <option value="by_category">事故速報のみ</option>
+              <option value="recent_self">最近（自社整備分）</option>
+              <option value="random_alt">ランダム交互（自社⇔発注者）</option>
             </select>
 
             {/* 秒数切替 */}
@@ -468,17 +568,25 @@ function SlideShow({
             {/* 画像表示エリア（タップ領域を3分割） */}
             <div className={`w-full flex items-center justify-center relative select-none ${isFullscreen ? "flex-1 h-full mb-0" : "flex-1 mb-2"}`}>
               {currentImageUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={currentImageUrl}
-                  alt={current.title}
-                  onLoad={() => setIsImageLoading(false)}
-                  style={isFullscreen ? { maxHeight: "100dvh", height: "100dvh" } : undefined}
-                  className={`max-w-full object-contain pointer-events-none transition-opacity duration-200 ${
-                    isFullscreen ? "w-screen" : "max-h-[75vh] shadow-lg"
-                  } ${isFullscreen && isImageLoading ? "opacity-30" : "opacity-100"}`}
-                  draggable={false}
-                />
+                <div className="relative flex items-center justify-center">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={currentImageUrl}
+                    alt={current.title}
+                    onLoad={() => setIsImageLoading(false)}
+                    style={isFullscreen ? { maxHeight: "100dvh", height: "100dvh" } : undefined}
+                    className={`max-w-full object-contain pointer-events-none transition-opacity duration-200 ${
+                      isFullscreen ? "w-screen" : "max-h-[75vh] shadow-lg"
+                    } ${currentIsFatal ? "ring-4 ring-red-600" : ""} ${isFullscreen && isImageLoading ? "opacity-30" : "opacity-100"}`}
+                    draggable={false}
+                  />
+                  {/* 死亡事故バッジ（severityに「死亡」等が含まれる場合に表示） */}
+                  {currentIsFatal && (
+                    <div className="absolute top-2 left-2 bg-red-600 text-white text-sm sm:text-base font-bold px-3 py-1 rounded shadow pointer-events-none">
+                      死亡事故
+                    </div>
+                  )}
+                </div>
               ) : (
                 <div className="text-gray-500">画像を読み込めません</div>
               )}
@@ -540,7 +648,9 @@ function SlideShow({
                 <div className="text-center mb-2 px-2">
                   <p className="text-xs sm:text-sm text-gray-600">
                     {current.date} | {current.category} | {current.type} |{" "}
-                    {current.severity}
+                    <span className={currentIsFatal ? "text-red-600 font-bold" : ""}>
+                      {current.severity}
+                    </span>
                   </p>
                   <p className="font-bold text-sm sm:text-base">{current.title}</p>
                 </div>
