@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth, db, storage } from "@/lib/firebase";
 import { useAuth } from "@/lib/AuthContext";
-import { collection, getDocs, query, where, orderBy } from "firebase/firestore";
+import { collection, getDocs, query, where, orderBy, doc, getDoc } from "firebase/firestore";
 import { ref, getDownloadURL } from "firebase/storage";
 
 // ------------------------------------------------------------
@@ -24,12 +24,19 @@ type Accident = {
 };
 
 // 表示モード: 直近3ヶ月 / 全件 / 事故速報のみ / 最近(自社整備分) / ランダム交互
+// ※ 現場セット（site_configs）は「モード」ではなく、全モードの前段フィルタとして適用される。
 type DisplayMode =
   | "all"
   | "recent3"
   | "by_category"
   | "recent_self"
   | "random_alt";
+
+// 現場セットで使う現場ID（今は迫のみ）。
+// 管理画面(/admin)で site_configs/{SITE_ID} に保存したセットをここで読む。
+// セットがあれば「その事故たち」に母集団を絞ってから各モードを適用、
+// セットが未設定（or 0件）なら従来通り全件が母集団。
+const SITE_ID = "sako";
 
 // デフォルト表示秒数
 const DEFAULT_INTERVAL_SECONDS = 15;
@@ -45,7 +52,8 @@ function isFatal(severity: string | undefined): boolean {
 // 判定は category のみで行う。severityの「死」は使わない——
 // 発注者の死亡事故(category=事故速報)まで自社扱いになるのを防ぐため。
 // 自社の死亡事故教材は category="死亡事故" で登録すること。
-const SELF_MADE_CATEGORIES = ["熱中症対策", "方針", "通達", "死亡事故"];
+// ※「通達」は外した：厚労省・NEXCO等からの通達は発注者資料であり、自社作成ではないため。
+const SELF_MADE_CATEGORIES = ["熱中症対策", "方針", "死亡事故"];
 function isSelfMade(a: Accident): boolean {
   return SELF_MADE_CATEGORIES.includes(a.category);
 }
@@ -198,6 +206,10 @@ function SlideShow({
   // モード切替やデータ更新のたびに作り直す（毎フレーム再シャッフルしない）。
   const [randomOrder, setRandomOrder] = useState<Accident[]>([]);
 
+  // 現場セット(site_set)モード用：管理画面で保存した、この現場で表示する事故IDの集合。
+  // null = まだ読み込んでいない / 空Set = 設定はあるが0件。
+  const [siteSetIds, setSiteSetIds] = useState<Set<string> | null>(null);
+
   // 全画面化の対象になる要素を掴むためのref
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -307,49 +319,85 @@ function SlideShow({
   }, []);
 
   // ----------------------------
-  // 表示モードによるフィルタ
+  // 現場セット(site_set)の読み込み
+  // site_configs/{SITE_ID} の individualPdfs（事故ID配列）を読んで集合化する。
+  // 管理画面で保存された内容。未設定なら空Set。
   // ----------------------------
+  useEffect(() => {
+    const loadSiteSet = async () => {
+      try {
+        const snap = await getDoc(doc(db, "site_configs", SITE_ID));
+        if (snap.exists()) {
+          const data = snap.data();
+          const ids: string[] = Array.isArray(data.individualPdfs)
+            ? data.individualPdfs
+            : [];
+          setSiteSetIds(new Set(ids));
+        } else {
+          setSiteSetIds(new Set());
+        }
+      } catch (e) {
+        console.error("現場セットの読み込みに失敗", e);
+        setSiteSetIds(new Set());
+      }
+    };
+    loadSiteSet();
+  }, []);
+
+  // ----------------------------
+  // 表示モードによるフィルタ
+  // ※ まず「現場セット」で母集団を絞り、その上で各モードを適用する。
+  //   - セットがある（siteSetIds が1件以上）→ その事故だけが母集団
+  //   - セットが空 or 未読み込み → 全件が母集団（従来通り）
+  // これで「迫は塗装関連に絞った上で、直近3ヶ月やランダム交互を選べる」が実現される。
+  // ----------------------------
+  // 現場セットで絞った母集団。セットが空/未設定なら全件。
+  const baseAccidents =
+    siteSetIds && siteSetIds.size > 0
+      ? accidents.filter((a) => siteSetIds.has(a.id))
+      : accidents;
+
   const filteredAccidents = (() => {
-    if (displayMode === "all") return accidents;
+    if (displayMode === "all") return baseAccidents;
 
     if (displayMode === "recent3") {
       const threeMonthsAgo = new Date();
       threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
-      return accidents.filter((a) => new Date(a.date) >= threeMonthsAgo);
+      return baseAccidents.filter((a) => new Date(a.date) >= threeMonthsAgo);
     }
 
     if (displayMode === "by_category") {
-      return accidents.filter((a) => a.category === "事故速報");
+      return baseAccidents.filter((a) => a.category === "事故速報");
     }
 
     // 最近(自社整備分): 自社で作成・整備したスライド(死亡事故/熱中症/方針など)を表示。
-    // 発注者アピール用。当初は直近1ヶ月で絞っていたが、方針(4月)や死亡事故(3〜4月)も
-    // 見せたいため期間制限は解除し、自社作成分は全部出す。
     if (displayMode === "recent_self") {
-      return accidents.filter((a) => isSelfMade(a));
+      return baseAccidents.filter((a) => isSelfMade(a));
     }
 
-    // ランダム交互: 全件を対象に、自社:発注者=1:1 で交互＆ランダムに並べる。
+    // ランダム交互: 母集団を対象に、自社:発注者=1:1 で交互＆ランダムに並べる。
     // 並びは randomOrder（useEffectで作成）を使う。
     if (displayMode === "random_alt") {
       return randomOrder;
     }
 
-    return accidents;
+    return baseAccidents;
   })();
 
   // ----------------------------
   // ランダム交互モードの並びを作る
-  //   accidents が変わったとき、または random_alt に切り替えたときに
+  //   accidents ・ 現場セット が変わったとき、または random_alt に切り替えたときに
   //   一度だけシャッフルして固定する（毎フレーム再シャッフルしない）。
+  //   ※ 全件ではなく「現場セットで絞った母集団（baseAccidents）」をシャッフルする。
   // ----------------------------
   useEffect(() => {
     if (displayMode === "random_alt") {
-      setRandomOrder(buildAlternating(accidents));
+      setRandomOrder(buildAlternating(baseAccidents));
       setCurrentIndex(0);
       setCurrentPageIndex(0);
     }
-  }, [displayMode, accidents]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayMode, accidents, siteSetIds]);
 
   // currentIndex が範囲外になったらリセット
   useEffect(() => {
